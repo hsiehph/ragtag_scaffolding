@@ -1,0 +1,65 @@
+import os, re
+import pandas as pd
+import numpy as np
+import glob
+
+
+shell.prefix("set -eo pipefail ; ")
+
+configfile: "config.yaml"
+
+if not os.path.exists("log"):
+	os.makedirs("log")
+
+def get_asm(wildcards):
+	return config["ASM"][wildcards.asm]
+
+def get_ref(wildcards):
+	return config["REF"][wildcards.ref]
+
+reference = config["REF"].keys()
+assembly = config["ASM"].keys()
+
+
+rule all:
+	input: expand("ragtagOut/final/{asm}_to_{ref}.ragtag.scaffold.fasta", ref=reference, asm=assembly)
+
+
+rule symlink:
+	input: "ragtagOut/{asm}_to_{ref}/FINAL.ragtag.scaffold.final"
+	output:
+		aln="ragtagOut/final/{asm}_to_{ref}.ragtag.scaffold.fasta"
+	params: sge_opts="-l h_rt=72:00:00 -l mfree=10G"
+	shell:
+		"""
+			x=`dirname {input}`; y=`readlink -f ${{x}}/ragtag.scaffold.fasta`; ln -s ${{y}} {output.aln}; samtools faidx {output.aln}
+		"""
+
+
+rule ragtag:
+	input:
+		ref=get_ref,
+		query=get_asm,
+		paf="ragtagOut/{asm}_to_{ref}/ragtag.scaffold.asm.paf"
+	output:
+		aln="ragtagOut/{asm}_to_{ref}/FINAL.ragtag.scaffold.final"
+	params: sge_opts="-l h_rt=72:00:00 -l mfree=10G"
+	shell:
+		"""
+			x=`dirname {output.aln}`; ragtag.py scaffold -o ${{x}} {input.ref} {input.query} && touch {output.aln} 
+		"""
+
+
+rule alignment:
+	input:
+		ref=get_ref,
+		query=get_asm,
+	output:
+		paf="ragtagOut/{asm}_to_{ref}/ragtag.scaffold.asm.paf"
+	params: sge_opts="-l h_rt=72:00:00 -l mfree=10G -pe serial 12"
+	shell:
+		"""
+			minimap2 -K 8G -t 12 -x asm20 -r 100k,200k --secondary=no --eqx -s 25000 {input.ref} {input.query}  > {output.paf} 2> {output.paf}.log 
+		"""
+
+
